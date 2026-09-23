@@ -1,5 +1,6 @@
 import os
 import shutil
+import traceback
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 class QueryRequest(BaseModel):
     query: str
+    enable_web_search: bool = False
 
 class QueryResponse(BaseModel):
     answer: str
@@ -59,9 +61,13 @@ async def query_rag(request: QueryRequest):
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
     try:
-        answer = await execute_rag_crew(request.query)
-        return QueryResponse(answer=answer)
+        answer = await execute_rag_crew(
+            user_query=request.query,
+            enable_web_search=request.enable_web_search
+        )
+        return QueryResponse(answer=str(answer))
     except Exception as e:
+        #traceback.print_exe()
         raise HTTPException(status_code=500, detail=f"RAG processing failed: {str(e)}")
 
 

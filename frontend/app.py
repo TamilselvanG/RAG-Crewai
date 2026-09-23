@@ -8,10 +8,10 @@ load_dotenv()
 BACKEND_URL = os.getenv("FASTAPI_BACKEND_URL", "http://localhost:8080").rstrip("/")
 print(f"Backend_url:{BACKEND_URL}")
 
-st.set_page_config(page_title="CrewAI RAG Assistant", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="RAG Assistant - CrewAI", page_icon="🤖", layout="wide")
 
-st.title("🤖 CrewAI RAG Assistant")
-st.caption("Upload your document (PDF, TXT) and ask questions powered by CrewAI & FastAPI.")
+st.title("🤖 RAG Assistant - CrewAI")
+st.caption("Upload your document (MD, PDF, TXT) and ask questions powered by CrewAI & FastAPI.")
 
 # Sidebar: File Upload Section
 with st.sidebar:
@@ -21,7 +21,13 @@ with st.sidebar:
     if uploaded_file is not None:
         if st.button("Index Document", use_container_width=True):
             with st.spinner("Uploading and indexing into vector store..."):
-                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+                files = {
+                    "file": (
+                        uploaded_file.name, 
+                        uploaded_file.getvalue(), 
+                        uploaded_file.type
+                    )
+                }
                 try:
                     res = requests.post(f"{BACKEND_URL}/upload", files=files, timeout=60)
                     if res.status_code == 200:
@@ -31,6 +37,21 @@ with st.sidebar:
                         st.error(f"Error: {res.json().get('detail', res.text)}")
                 except requests.exceptions.RequestException as e:
                     st.error(f"Failed to connect to FastAPI: {e}")
+
+    st.divider()
+    st.header("⚙️ Search Controls")
+
+    #web search toggle
+    web_search_enabled = st.toggle(
+        "Enable Web Search",
+        value=False,
+        help="When OFF, answers are strictly limited to the uploaded file. When ON, live web results are included."
+    )
+
+    if web_search_enabled:
+        st.info("🌐 Web Search is **ACTIVE** (Document + Live Web)")
+    else:
+        st.warning("🔒 Anti-Hallucination **ACTIVE** (Document Only)")
 
     st.divider()
     if st.button("Clear Chat History", use_container_width=True):
@@ -57,19 +78,28 @@ if prompt := st.chat_input("Ask a question about your uploaded document..."):
 
     # Call FastAPI backend
     with st.chat_message("assistant"):
-        with st.spinner("CrewAI agents are retrieving context and reasoning..."):
+        spinner_msg = (
+            "Searching document & web..." if web_search_enabled 
+            else "Checking document context (anti-hallucination active)..."
+        )
+        with st.spinner(spinner_msg):
             try:
+                payload = {
+                    "query": prompt,
+                    "enable_web_search": web_search_enabled,
+                }
+
                 response = requests.post(
                     f"{BACKEND_URL}/query",
-                    json={"query": prompt},
+                    json=payload,
                     timeout=120
                 )
+
                 if response.status_code == 200:
                     answer = response.json().get("answer", "No answer received.")
                     st.markdown(answer)
                     st.session_state.messages.append({"role": "assistant", "content": answer})
                 else:
-                    error_detail = response.json().get("detail", response.text)
-                    st.error(f"Error from server: {error_detail}")
+                    st.error(f"Error ({response.status_code}): {response.text}")
             except requests.exceptions.RequestException as e:
-                st.error(f"Failed to connect to backend: {e}")
+                st.error(f"Connect error: {e}")
