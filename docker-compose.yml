@@ -1,0 +1,45 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: rag-crewai-backend:latest
+    container_name: rag-crewai-backend
+    env_file:
+      - .env
+    environment:
+      # Anything set here overrides values from .env
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "8080:8080"
+    volumes:
+      # Persist the Chroma vector store across container restarts
+      - chroma_data:/app/backend/chroma_db
+    restart: unless-stopped
+    networks:
+      - rag-net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: rag-crewai-frontend:latest
+    container_name: rag-crewai-frontend
+    environment:
+      # Reach the backend by service name on the shared network
+      FASTAPI_BACKEND_URL: "http://backend:8080"
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - rag-net
+
+volumes:
+  chroma_data:
+
+networks:
+  rag-net:
+    driver: bridge

@@ -1,50 +1,88 @@
-# CrewAI RAG App Backend
+# RAG Assistant — CrewAI + FastAPI + Streamlit
 
-This project implements a Retrieval-Augmented Generation (RAG) backend using CrewAI and LangChain, enabling question answering over uploaded documents via vector search and optional live web search.
+A full-stack Retrieval-Augmented Generation (RAG) application. Upload PDF / TXT / MD documents through a Streamlit UI, index them into a local ChromaDB vector store, and ask questions answered by a CrewAI multi-agent pipeline running on GPT-4o-mini.
 
-## Overview
+---
 
-- **Document ingestion:** Supports PDF and text files, splits documents into manageable chunks for embedding.
-- **Vector store:** Uses local ChromaDB with HuggingFace embeddings (`sentence-transformers/all-MiniLM-L6-v2`), running on CPU by default.
-- **Retrieval:** Performs semantic similarity search over the embedded document chunks.
-- **QA Agents:** Employs CrewAI agents with GPT-4o-mini LLM to sequentially retrieve facts and synthesize grounded answers.
-- **Tools integration:** Includes tools for searching the vector database and optionally performing live DuckDuckGo web search.
-- **Configurable grounding:** Toggle web search to either strictly ground answers only to uploaded document context or supplement from live internet.
+## Project Structure
 
-## Updated Code Flow
+```
+RAG-Crewai/
+├── README.md
+├── requirements.txt
+├── backend/
+│   ├── main.py          # FastAPI app: /upload, /query, /health
+│   └── rag_engine.py    # Ingestion, vector store, CrewAI agents & tools
+└── frontend/
+    └── app.py           # Streamlit chat UI
+```
 
-1. **Document ingestion**: 
-   Use `ingest_document(file_path: str) -> int` to load, split, and embed documents into ChromaDB.
+At runtime the backend also creates:
 
-2. **Query execution**:
-   Call the async function `execute_rag_crew(user_query: str, enable_web_search: bool = False) -> str` to run CrewAI agents.
+- `backend/uploads/` — temporary landing spot for uploaded files (deleted after ingestion).
+- `backend/chroma_db/` — persistent ChromaDB vector store.
 
-   - If `enable_web_search` is `False`, the system strictly answers only from the uploaded documents and refuses to guess.
-   - If `True`, it can enrich answers using real-time web information along with uploaded docs.
+---
 
-3. **CrewAI Agents**:
-   - **Information Retrieval Specialist**: Uses configured tools (vector DB and optionally web search) to gather factual excerpts.
-   - **Knowledge Synthesizer & Writer**: Synthesizes the gathered facts into clear, concise, strictly grounded answers or refuses if no context.
+## Architecture
 
-4. **Tools**:
-   - `Search Vector Database`: Queries the vector store with similarity search returning top relevant chunks.
-   - `Internet Search`: (optional) Uses DuckDuckGo for live internet search results.
+```
+┌───────────────┐   HTTP    ┌──────────────────┐    ┌────────────────────┐
+│  Streamlit UI │ ────────► │  FastAPI backend │ ──►│  rag_engine.py     │
+│  frontend/    │  /upload  │  backend/main.py │    │  - Chunk & embed   │
+│  app.py       │  /query   │                  │    │  - ChromaDB store  │
+└───────────────┘ ◄──────── └──────────────────┘    │  - CrewAI agents   │
+                   answer                            └────────────────────┘
+```
+
+### Components
+
+- **Frontend (`frontend/app.py`)** — Streamlit chat app. Sidebar handles file upload and an "Enable Web Search" toggle; the main pane is a chat that POSTs to the FastAPI backend.
+- **Backend API (`backend/main.py`)** — FastAPI service exposing:
+  - `POST /upload` — accepts `.pdf`, `.txt`, `.md`; saves temporarily, chunks and embeds into ChromaDB, then removes the temp file.
+  - `POST /query` — body `{ "query": str, "enable_web_search": bool }`; runs the CrewAI pipeline and returns `{ "answer": str }`.
+  - `GET /health` — liveness probe.
+- **RAG engine (`backend/rag_engine.py`)**:
+  - **Loaders**: `PyPDFLoader` for PDFs, `TextLoader` for TXT/MD.
+  - **Splitter**: `RecursiveCharacterTextSplitter` (chunk size 800, overlap 100).
+  - **Embeddings**: HuggingFace `sentence-transformers/all-MiniLM-L6-v2` (CPU, normalized).
+  - **Vector store**: local persistent `Chroma` collection `rag_documents` at `backend/chroma_db/`.
+  - **LLM**: CrewAI `LLM` wrapping `gpt-4o-mini` (temperature `0.2`).
+  - **Tool**: `Search Vector Database` — top-k=4 similarity search over the Chroma store.
+  - **Agents (sequential Crew)**:
+    1. **Information Retrieval Specialist** — uses the vector-search tool to gather factual excerpts.
+    2. **Knowledge Synthesizer & Writer** — composes a grounded markdown answer from those excerpts.
+
+---
+
+## Prerequisites
+
+- Python 3.10+
+- An OpenAI API key (used by CrewAI for the `gpt-4o-mini` LLM)
+
+---
 
 ## Setup
 
-1. **Clone the repository**
+1. **Clone and enter the project**
 
    ```bash
    git clone <repository-url>
-   cd <repo-folder>
+   cd RAG-Crewai
    ```
 
 2. **Create and activate a virtual environment**
 
-   ```bash
+   ```powershell
+   # Windows (PowerShell)
    python -m venv venv
-   .\venv\Scripts\activate    # Windows
-   source venv/bin/activate   # Linux/macOS
+   .\venv\Scripts\Activate.ps1
+   ```
+
+   ```bash
+   # Linux / macOS
+   python -m venv venv
+   source venv/bin/activate
    ```
 
 3. **Install dependencies**
@@ -53,46 +91,197 @@ This project implements a Retrieval-Augmented Generation (RAG) backend using Cre
    pip install -r requirements.txt
    ```
 
-4. **Set environment variables**
+4. **Configure environment variables**
 
-   Add any API keys or secrets to `.env` if needed. Web search tool and embeddings run locally by default.
+   Create a `.env` file in the project root:
 
-5. **Run backend functions**
-
-   Import and call:
-
-   ```python
-   from rag_engine import ingest_document, execute_rag_crew
-   import asyncio
-
-   # Ingest document chunks into vector store
-   num_chunks = ingest_document("sample.pdf")
-   print(f"Ingested {num_chunks} chunks.")
-
-   # Run a query, enabling or disabling web search
-   response = asyncio.run(execute_rag_crew("What is the main topic of the document?", enable_web_search=False))
-   print(response)
+   ```dotenv
+   OPENAI_API_KEY=sk-...
+   # Optional — override backend URL used by the Streamlit frontend
+   FASTAPI_BACKEND_URL=http://localhost:8080
    ```
 
-## Core Files
+---
 
-- `rag_engine.py`: Core engine for loading docs, vector database management, tool definitions, and CrewAI agent orchestration.
-- `chroma_db/`: Persistent storage directory for vector embeddings.
+## Running the App
+
+Open two terminals (both with the virtualenv activated).
+
+**Terminal 1 — start the FastAPI backend:**
+
+```bash
+cd backend
+uvicorn main:app --reload --port 8080
+```
+
+The API listens on `http://localhost:8080` (auto-reload enabled). Swagger UI is available at `http://localhost:8080/docs`.
+
+**Terminal 2 — start the Streamlit frontend:**
+
+```bash
+cd frontend
+streamlit run app.py
+```
+
+Streamlit will open in your browser (default `http://localhost:8501`).
+
+### Using the UI
+
+1. In the sidebar, upload a PDF / TXT / MD file and click **Index Document**.
+2. Toggle **Enable Web Search** as desired (see note below).
+3. Ask questions in the chat input. Responses come back from the CrewAI agents.
+4. **Clear Chat History** resets the conversation state.
+
+---
+
+## Running with Docker
+
+The project ships with `Dockerfile.backend`, `Dockerfile.frontend`, and `docker-compose.yml` at the project root.
+
+### Prerequisites
+
+- Docker Engine 24+ and Docker Compose v2
+- A `.env` file in the project root with your OpenAI key:
+
+  ```dotenv
+  OPENAI_API_KEY=sk-...
+  ```
+
+  `FASTAPI_BACKEND_URL` is set automatically by Compose for the frontend container — you do not need to define it here.
+
+### Build & start both services
+
+```bash
+docker compose up --build
+```
+
+- Frontend (Streamlit): `http://localhost:8501`
+- Backend (FastAPI): `http://localhost:8080` — Swagger UI at `http://localhost:8080/docs`
+
+Run detached:
+
+```bash
+docker compose up --build -d
+docker compose logs -f
+```
+
+### Stop
+
+```bash
+docker compose down          # keep the Chroma vector store
+docker compose down -v       # also delete the chroma_data volume (resets the index)
+```
+
+### Build the images individually
+
+```bash
+docker build -f Dockerfile.backend  -t rag-crewai-backend  .
+docker build -f Dockerfile.frontend -t rag-crewai-frontend .
+```
+
+### What Compose sets up
+
+- **Network**: bridge network `rag-net`. The frontend reaches the backend as `http://backend:8080`.
+- **Volume**: named volume `chroma_data` mounted at `/app/backend/chroma_db` so indexed documents survive restarts.
+- **Health**: the frontend waits for the backend `/health` check to pass before starting.
+- **Restart policy**: `unless-stopped` on both services.
+
+### Notes
+
+- The backend image is large (~2 GB) because `sentence-transformers` pulls in `torch`. First build will take several minutes.
+- The frontend image only contains `streamlit`, `requests`, and `python-dotenv` — it never runs the ML stack.
+- To point the frontend at a backend outside Compose (e.g. a remote host), override the env var:
+
+  ```bash
+  docker compose run -e FASTAPI_BACKEND_URL=https://api.example.com frontend
+  ```
+
+---
+
+## API Reference
+
+### `POST /upload`
+
+Multipart form upload. Field name: `file`. Allowed extensions: `.pdf`, `.txt`, `.md`.
+
+Response:
+
+```json
+{
+  "status": "success",
+  "filename": "example.pdf",
+  "chunks_indexed": 42,
+  "message": "Successfully indexed example.pdf into vector store."
+}
+```
+
+### `POST /query`
+
+```json
+{
+  "query": "What is the main topic of the document?",
+  "enable_web_search": false
+}
+```
+
+Response:
+
+```json
+{ "answer": "..." }
+```
+
+### `GET /health`
+
+```json
+{ "status": "ok" }
+```
+
+---
+
+## Programmatic Usage
+
+You can use the RAG engine directly, without the API:
+
+```python
+import asyncio
+from backend.rag_engine import ingest_document, execute_rag_crew
+
+num_chunks = ingest_document("sample.pdf")
+print(f"Ingested {num_chunks} chunks.")
+
+answer = asyncio.run(execute_rag_crew("What is the main topic?"))
+print(answer)
+```
+
+---
 
 ## Dependencies
 
-- crewai
-- langchain_community
-- langchain_text_splitters
-- langchain_huggingface
-- langchain_openai
-- langchain_chroma
+Declared in `requirements.txt`:
 
-Refer to `requirements.txt` for full package versions.
+- `fastapi`, `uvicorn`, `python-multipart` — backend API
+- `streamlit`, `requests` — frontend
+- `crewai`, `crewai-tools` — multi-agent orchestration
+- `langchain`, `langchain-community`, `langchain-openai`, `langchain-huggingface` — RAG plumbing
+- `chromadb` — persistent vector store
+- `sentence-transformers` — local embedding model
+- `pypdf` — PDF parsing
+- `python-dotenv` — environment configuration
+
+---
+
+## Notes & Known Limitations
+
+- **Web search toggle**: the Streamlit UI and `/query` request schema both expose `enable_web_search`, but `execute_rag_crew` in `rag_engine.py` currently ignores the flag — answers are grounded strictly to the uploaded documents. Wiring a live-search tool (e.g. DuckDuckGo) into the retrieval agent is a natural next step.
+- **Persistence**: the Chroma store at `backend/chroma_db/` is not cleared between runs; re-uploading the same document will add duplicate chunks.
+- **Embeddings device**: defaults to CPU. Switch `model_kwargs={"device": "cuda"}` in `rag_engine.py` if a GPU is available.
+- **Ports**: backend `8080`, frontend `8501` — change via `main.py` and Streamlit CLI flags if they conflict.
+
+---
 
 ## License
 
-This project is released under the gtlabs.sbs License.
+Released under the gtlabs License.
 
 ---
 
