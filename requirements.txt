@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+streamlit
+crewai
+crewai-tools
+langchain
+langchain-community
+langchain-openai
+langchain-huggingface
+sentence-transformers 
+chromadb
+python-multipart
+requests
+python-dotenv
+pypdf
