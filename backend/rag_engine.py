@@ -59,7 +59,8 @@ def search_vector_db(query: str) -> str:
     return "\n\n---\n\n".join([doc.page_content for doc in results])
 
 
-async def execute_rag_crew(user_query: str) -> str:
+async def execute_rag_crew(user_query: str, 
+                           enable_web_search: bool = False,) -> str:
     """Runs a CrewAI crew composed of a Retriever & Synthesizer to answer questions."""
     # Use native CrewAI LLM object
     llm = LLM(
@@ -93,9 +94,17 @@ async def execute_rag_crew(user_query: str) -> str:
         agent=retrieval_agent,
     )
 
+    web_search_status = (
+        "Web search was requested, but it is not implemented yet."
+        if enable_web_search
+        else "Web search is disabled."
+    )
+
     answer_task = Task(
-        description=f"Using the gathered facts, write a comprehensive and clear answer to: '{user_query}'. "
-                    f"Do not hallucinate facts outside the provided document context.",
+        description=(f"Using the gathered facts, write a comprehensive and clear answer to: '{user_query}'. "
+                     f"Do not hallucinate facts outside the provided document context. "
+                     f"{web_search_status}"
+        ),
         expected_output="A helpful, factual, markdown-formatted response.",
         agent=synthesizer_agent,
     )
